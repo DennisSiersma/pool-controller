@@ -1,0 +1,321 @@
+# Pool Controller DJS
+# Waveshare ESP32-S3-Relay-6CH
+#Supply Voltage 7~36V (or 5V/1A Type-C Interface)
+#Relay channels 6 CH
+#Contact form 1NO 1NC
+#Interface  Type-C
+#Communication Protocol USB Protocol
+#Dimensions 88(H) x 122(V)mm
+#Onboard Interface
+#GPIO Control Function  Description
+#GP0  BOOT Key  BOOT Key Control Pin
+#GP21 BUZZER  Buzzer Control Pin
+#GP38 RGB RGB LED Control Pin
+#GP1  CH1 Relay No.1 Control Pin
+#GP2  CH2 Relay No.2 Control Pin
+#GP41 CH3 Relay No.3 Control Pin
+#GP42 CH4 Relay No.4 Control Pin
+#GP45 CH5 Relay No.5 Control Pin
+#GP46 CH6 Relay No.6 Control Pin
+#GP17 TXD UART TX pin, converted to RS485
+#GP18 RXD UART RX pin, converted to RS485
+#Buttons and LEDS
+#GP5  button 1  GP13 led 
+#GP4  button 2  GP14 led
+#GP40 button 3  GP15 led
+#GP39 button 4  GP16 led
+#Flow sensor input pin  GPIO12
+#I2C sda pin 8, SCL pin 10
+substitutions:
+  name: esphome-web-3e8cfc
+  friendly_name: Waveshare Relay RS485
+  blueriiot_mac: !secret blueriiot_mac
+  blueriiot_name_prefix: !secret blueriiot_nameprefix
+  blueriiot_id_prefix: !secret blueriiot_idprefix
+# send true 0x01 to this service ID
+  blueriiot_send_service_uuid: 'F3300001-F0A2-9B06-0C59-1BC4763B5C00'
+  blueriiot_send_characteristic_uuid: 'F3300002-F0A2-9B06-0C59-1BC4763B5C00'
+# notification is received on this Service ID                  
+  blueriiot_receive_service_uuid: 'F3300001-F0A2-9B06-0C59-1BC4763B5C00'
+  blueriiot_receive_characteristic_uuid: 'F3300003-F0A2-9B06-0C59-1BC4763B5C00'
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  name_add_mac_suffix: false
+  platformio_options:
+    board_build.flash_mode: dio
+  project:
+    name: esphome.web
+    version: '1.0'
+esp32:
+  board: esp32-s3-devkitc-1
+  framework:
+    type: arduino
+# Enable logging
+logger:
+# Enable Home Assistant API
+api:
+# Allow Over-The-Air updates
+ota:
+  platform: esphome
+# Allow provisioning Wi-Fi via serial
+improv_serial:
+wifi:
+# Set up a wifi access point
+  ap: {}
+# ...
+  manual_ip:
+# Set this to the IP of the ESP
+    static_ip: 192.168.1.47
+# Set this to the IP address of the router. Often ends with .1
+    gateway: 192.168.1.1
+# The subnet of the network. 255.255.255.0 works for most home networks.
+    subnet: 255.255.255.0
+# In combination with the `ap` this allows the user
+# to provision wifi credentials to the device via WiFi AP.
+captive_portal:
+dashboard_import:
+  package_import_url: github://esphome/firmware/esphome-web/esp32s3.yaml@v2
+  import_full_config: true
+# Sets up Bluetooth LE (Only on ESP32) to allow the user
+# to provision wifi credentials to the device.
+esp32_improv:
+  authorizer: none
+# To have a "next url" for improv serial
+web_server:
+# i2c:
+#   sda: GPIO08
+#   scl: GPIO10
+#   scan: True
+# ble_client:
+#   - mac_address: ${blueriiot_mac}
+#     id: ble_client_${blueriiot_id_prefix}
+#     on_connect: 
+#       then:
+#         - lambda: "id(binary_sensor_${blueriiot_id_prefix}_connected).publish_state(true);"
+#         - delay: 2s
+#         - button.press: button_${blueriiot_id_prefix}_doreading
+#     on_disconnect: [lambda: "id(binary_sensor_${blueriiot_id_prefix}_connected).publish_state(false);"]
+binary_sensor:
+  - platform: gpio
+    pin: 
+      number: GPIO5
+      mode:
+        input: true
+        pulldown: true
+    filters:
+      - delayed_on: 100ms
+      - delayed_off: 100ms
+    name: "Zwembadpomp on/off"
+    on_press:
+      then:
+        - switch.toggle: RL1 
+  - platform: gpio
+    pin: 
+      number: GPIO4
+      mode:
+        input: true
+        pulldown: true
+    filters:
+      - delayed_on: 100ms
+      - delayed_off: 100ms
+    name: "Zwembadpomp low speed"
+    on_press:
+      then:
+        - switch.turn_on: RL2
+        - switch.turn_off: RL3
+        - switch.turn_off: RL4
+  - platform: gpio
+    pin: 
+      number: GPIO40
+      mode:
+        input: true
+        pulldown: true
+    filters:
+      - delayed_on: 100ms
+      - delayed_off: 100ms
+    name: "Zwembadpomp med speed"
+    on_press:
+      then:
+        - switch.turn_on: RL3
+        - switch.turn_off: RL2
+        - switch.turn_off: RL4
+  - platform: gpio
+    pin: 
+      number: GPIO39
+      mode:
+        input: true
+        pulldown: true
+    filters:
+      - delayed_on: 100ms
+      - delayed_off: 100ms
+    name: "Zwembadpomp high speed"
+    on_press:
+      then:
+        - switch.turn_on: RL4
+        - switch.turn_off: RL2
+        - switch.turn_off: RL3
+  - platform: gpio
+    pin: 
+      number: GPIO12
+      inverted: True
+      mode: 
+        input: true
+        pulldown: True
+    name: "zwembad flow sensor"
+## Blue Connect    
+#   - platform: template
+#     id: binary_sensor_${blueriiot_id_prefix}_connected
+#     name: ${blueriiot_name_prefix} Status
+#     device_class: connectivity
+#     entity_category: diagnostic
+#Switches and relays
+switch:
+  - platform: gpio
+    pin: GPIO1   
+    name: "Pump Toggle" 
+    id: RL1
+    on_turn_on:
+    - output.turn_on: lb1
+    on_turn_off: 
+    - output.turn_off: lb1
+    - output.turn_off: lb2
+    - output.turn_off: lb3
+    - output.turn_off: lb4
+  - platform: gpio 
+    pin: GPIO2  
+    name: "Pump High"
+    id: RL2
+    on_turn_on:
+    - output.turn_on: lb2
+    - output.turn_off: lb3
+    - output.turn_off: lb4
+  - platform: gpio 
+    pin: GPIO41  
+    name: "Pump Mid" 
+    id: RL3
+    on_turn_on:
+    - output.turn_on: lb3
+    - output.turn_off: lb2
+    - output.turn_off: lb4
+  - platform: gpio
+    pin: GPIO42   
+    name: "Pump Low" 
+    id: RL4
+    on_turn_on:
+    - output.turn_on: lb4
+    - output.turn_off: lb2
+    - output.turn_off: lb3
+#- platform: gpio 
+#  pin: GPIO45  #D6
+#  name: "Relay 5"
+#  id: RL5
+#- platform: gpio 
+#  pin: GPIO46  #D5
+#  name: "Relay6" 
+#  id: RL6  
+  - platform: template
+    name: "switch_buzzer"
+    optimistic: true
+    turn_on_action:
+      - output.turn_on: buzzer
+#in here we set the frequency, but first we had to turn the buzzer on as stated in https://esphome.io/components/output/ledc
+      - output.ledc.set_frequency:
+          id: buzzer
+          frequency: "2441Hz"
+      - output.set_level:
+          id: buzzer
+          level: "75%"
+    turn_off_action:
+      - output.turn_off: buzzer
+#   - platform: ble_client
+#     ble_client_id: ble_client_${blueriiot_id_prefix}
+#     name: "${blueriiot_name_prefix} Enable"
+#     id: switch_${blueriiot_id_prefix}_enable    
+# Outputs
+output:
+  - platform: ledc
+    pin: GPIO21
+    id: buzzer
+  - platform: gpio
+    pin: GPIO13
+    id: lb2
+  - platform: gpio
+    pin: GPIO14
+    id: lb1
+  - platform: gpio
+    pin: GPIO15
+    id: lb4
+  - platform: gpio
+    pin: GPIO16
+    id: lb3      
+# uart:
+#   id: modbus_uart
+#   tx_pin: GPIO17
+#   rx_pin: GPIO18
+#   baud_rate: 1200
+#   stop_bits: 1
+#   data_bits: 8
+#   parity: NONE 
+#   debug:
+#     after:
+#       delimiter: "\n" 
+# modbus:
+#   #flow_control_pin: GPIOXX
+#   send_wait_time: 500ms
+#   id: mod_bus_iSaver
+#   uart_id: modbus_uart
+#   disable_crc: True
+# modbus_controller:
+#   - id: controller_iSaver
+#     ## the Modbus device addr
+#     address: 0x1
+#     modbus_id: mod_bus_iSaver
+#     command_throttle: 500ms
+#     setup_priority: -10
+#     update_interval: 10s
+# Text sensors with general information
+# text_sensor:
+#   - platform: version
+#     name: $hostname ESPHome Version
+#   - platform: wifi_info
+#     ip_address:
+#       name: $hostname IP Address
+#     ssid:
+#       name: $hostname WiFi
+#     bssid:
+#       name: $hostname MAC
+#Status Leds
+light:
+ - platform: neopixelbus
+   name: "RGB Light"
+   pin: GPIO38
+   type: RGB
+   variant: WS2812x
+   num_leds: 1
+   id: rgb1
+   method:
+    type: esp32_rmt
+    channel: 0
+ - platform: binary
+   name: "Led button 1"
+   output: lb1
+ - platform: binary
+   name: "Led button 2"
+   output: lb2
+ - platform: binary
+   name: "Led button 3"
+   output: lb3
+ - platform: binary
+   name: "Led button 4"
+   output: lb4
+sensor:
+#   - platform: template 
+#     id: sensor_${blueriiot_id_prefix}_temperature
+#     name: ${blueriiot_name_prefix} Temperature
+#     unit_of_measurement: "°C"
+#     icon: "mdi:water-percent"
+#     device_class: "temperature"
+#     state_class: "measurement"
+#     accuracy_decimals: 1
+# (overige Blue Connect / Modbus sensoren stonden uitgecommentarieerd)

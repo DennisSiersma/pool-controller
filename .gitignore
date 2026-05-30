@@ -1,0 +1,9 @@
+# ESPHome secrets - NOOIT committen
+secrets.yaml
+
+# ESPHome build-artefacten
+.esphome/
+*.bin
+
+# OS
+.DS_Store
