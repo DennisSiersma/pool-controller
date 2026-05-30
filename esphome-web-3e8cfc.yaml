@@ -104,7 +104,7 @@ binary_sensor:
     filters:
       - delayed_on: 100ms
       - delayed_off: 100ms
-    name: "Zwembadpomp on/off"
+    name: "Zwembadpomp on-off"
     on_press:
       then:
         - switch.toggle: RL1
