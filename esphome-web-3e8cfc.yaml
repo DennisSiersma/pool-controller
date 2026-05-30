@@ -50,6 +50,12 @@ improv_serial:
 
 wifi:
   ap: {}
+  # OTA-doeladres. Het device draait nu op .238 (DHCP), maar de static_ip
+  # hieronder is .47. Zonder use_address probeert ESPHome te uploaden naar
+  # .47 (bestaat nog niet) -> "No route to host". Daarom richten we de
+  # upload tijdelijk op het huidige adres. Na het flashen komt het device
+  # op .47; zet dit daarna op 192.168.1.47 of esphome-web-3e8cfc.local.
+  use_address: 192.168.1.238
   manual_ip:
     static_ip: 192.168.1.47
     gateway: 192.168.1.1
