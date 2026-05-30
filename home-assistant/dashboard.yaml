@@ -1,0 +1,65 @@
+# Lovelace-kaart voor de iSaver pool-pomp (RS485)
+# Voeg toe via een dashboard > 'Kaart toevoegen' > 'Handmatig' (YAML).
+# Alleen standaardkaarten, geen custom cards.
+# Maak eerst de scripts uit scripts.yaml aan, anders werken de knoppen niet.
+# Controleer de entity_ids na het flashen.
+
+type: vertical-stack
+cards:
+  - type: gauge
+    name: Huidige toerental
+    entity: sensor.waveshare_relay_rs485_huidige_rpm_rs485
+    unit: rpm
+    min: 0
+    max: 2900
+    needle: true
+    severity:
+      green: 1200
+      yellow: 1700
+      red: 2450
+
+  - type: entities
+    title: Pomp besturing (RS485)
+    entities:
+      - entity: number.waveshare_relay_rs485_pomp_rpm_rs485
+        name: Toerental instellen
+      - entity: sensor.waveshare_relay_rs485_huidige_rpm_rs485
+        name: Werkelijk toerental
+      - entity: sensor.waveshare_relay_rs485_modbus_status
+        name: RS485-status
+
+  - type: horizontal-stack
+    cards:
+      - type: button
+        name: Nacht
+        icon: mdi:weather-night
+        tap_action:
+          action: perform-action
+          perform_action: script.pool_pump_nacht
+      - type: button
+        name: Dag
+        icon: mdi:weather-sunny
+        tap_action:
+          action: perform-action
+          perform_action: script.pool_pump_dag
+      - type: button
+        name: Backwash
+        icon: mdi:water-sync
+        tap_action:
+          action: perform-action
+          perform_action: script.pool_pump_backwash
+
+  - type: horizontal-stack
+    cards:
+      - type: button
+        name: Max 2 uur
+        icon: mdi:timer-play
+        tap_action:
+          action: perform-action
+          perform_action: script.pool_pump_max_2h
+      - type: button
+        name: Uit
+        icon: mdi:power
+        tap_action:
+          action: perform-action
+          perform_action: script.pool_pump_uit

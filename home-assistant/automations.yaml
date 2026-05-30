@@ -1,0 +1,17 @@
+# Voorbeeld-dagschema voor de iSaver pool-pomp (RS485).
+# Plak in automations.yaml of maak na via de UI. Pas tijden/snelheden aan.
+# LET OP: RS485 stuurt alleen als de iSaver via het frontpaneel aan staat.
+
+- alias: 'Pomp - overdag op dagsnelheid'
+  trigger:
+    - platform: time
+      at: '08:00:00'
+  action:
+    - action: script.pool_pump_dag
+
+- alias: 'Pomp - s avonds op nachtsnelheid'
+  trigger:
+    - platform: time
+      at: '22:00:00'
+  action:
+    - action: script.pool_pump_nacht

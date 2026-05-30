@@ -1,6 +1,6 @@
 # Pool Controller DJS - Waveshare ESP32-S3-Relay-6CH
 # =====================================================================
-# RS485-VERSIE: stuurt de iSaver+ (Aquagem) traploos aan via RS485,
+# RS485-VERSIE (v2): stuurt de iSaver+ (Aquagem) traploos aan via RS485,
 # met de relais behouden als BACKUP (gecorrigeerde logica + LEDs).
 #
 # RS485-PROTOCOL (gereverse-engineerd, GEEN standaard Modbus):
@@ -8,19 +8,17 @@
 #   - Frame: AA <func> <reg-hi> <reg-lo> <data-hi> <data-lo> <CRC-lo> <CRC-hi>
 #   - CRC = Modbus-CRC16 (init 0xFFFF, poly 0xA001), laagste byte eerst.
 #   - Lees huidige rpm : func 0xC3, reg 2001 (0x07D1) -> AA C3 07 D1 00 00 +crc
-#       antwoord: rpm = byte[5]<<8 | byte[6]
+#       antwoord (7+ bytes): rpm = byte[5]<<8 | byte[6]
 #   - Schrijf doel-rpm : func 0xD0, reg 3001 (0x0BB9) -> AA D0 0B B9 hi lo +crc
 #       rpm < 1200  => stuur 1  = pomp UIT
+#   - LET OP: alleen rpm-lezen en rpm-schrijven werken. GEEN betrouwbaar
+#     register voor vermogen (W), status of foutcodes (community-bevinding).
 #
-# BELANGRIJKE BEDIENINGSVOLGORDE (community-bevinding):
-#   RS485 werkt ALLEEN als de iSaver eerst via het FRONTPANEEL is aangezet.
-#   Zet je 'm uit/aan via de relais of het paneel, dan negeert hij RS485.
-#   Gebruik RS485 EN de relais dus niet door elkaar - kies een methode.
+# BEDIENINGSVOLGORDE: RS485 werkt ALLEEN als de iSaver eerst via het
+#   FRONTPANEEL is aangezet. Gebruik RS485 EN de relais niet door elkaar.
 #
-# HARDWARE:
-#   - Onboard RS485 op GP17 (TX) / GP18 (RX), auto-direction (geen DE-pin).
-#   - Bedraad A->A, B->B naar de iSaver (en bij twijfel een gezamenlijke GND).
-#   - Hapert communicatie? Zet de 120ohm-jumper op het board om.
+# HARDWARE: onboard RS485 op GP17 (TX) / GP18 (RX), auto-direction (geen DE).
+#   Bedraad A->A, B->B (+ evt. GND). Geen data? Zet de 120ohm-jumper om.
 # =====================================================================
 
 substitutions:
@@ -47,6 +45,8 @@ logger:
   # level: DEBUG
 
 api:
+  # Niet herstarten als HA-verbinding even wegvalt (voorkomt onnodige reboots).
+  reboot_timeout: 0s
 
 ota:
   platform: esphome
@@ -91,45 +91,21 @@ sensor:
     name: 'WiFi Signal'
     update_interval: 60s
 
-  # -------------------------------------------------------------------
-  # RS485: HUIDIGE RPM LEZEN  (func 0xC3, reg 2001)
-  # Blokkeert de ESP ~150 ms per uitlezing (1200 baud). 30 s interval.
-  # -------------------------------------------------------------------
+  # Huidige rpm (gevuld door het interval hieronder)
   - platform: template
     name: 'Huidige RPM (RS485)'
     id: pump_rpm_actual
     unit_of_measurement: 'rpm'
     accuracy_decimals: 0
-    update_interval: 30s
-    lambda: |-
-      auto uart = id(rs485_uart);
-      // eventueel oude bytes weggooien
-      while (uart->available() > 0) { uint8_t t; uart->read_array(&t, 1); }
-      uint8_t data[6] = {0xAA, 0xC3, 0x07, 0xD1, 0x00, 0x00};
-      uint16_t crc = 0xFFFF;
-      for (int i = 0; i < 6; i++) {
-        crc ^= data[i];
-        for (int j = 0; j < 8; j++) {
-          if (crc & 0x0001) { crc >>= 1; crc ^= 0xA001; } else { crc >>= 1; }
-        }
-      }
-      uint8_t packet[8] = {0xAA, 0xC3, 0x07, 0xD1, 0x00, 0x00,
-                           (uint8_t)(crc & 0xFF), (uint8_t)((crc >> 8) & 0xFF)};
-      uart->write_array(packet, 8);
-      uart->flush();
-      uint32_t start = millis();
-      while (uart->available() < 7 && (millis() - start) < 200) { delay(1); }
-      if (uart->available() >= 7) {
-        uint8_t resp[7];
-        uart->read_array(resp, 7);
-        return (float)((uint16_t)resp[5] << 8 | (uint16_t)resp[6]);
-      }
-      return NAN;
+    update_interval: never
 
 text_sensor:
   - platform: debug
     reset_reason:
       name: 'Reset Reason'
+  - platform: template
+    name: 'Modbus status'
+    id: modbus_status
 
 # ---------------------------------------------------------------------
 # RS485 UART (onboard transceiver, auto-direction -> geen DE-pin)
@@ -142,6 +118,44 @@ uart:
   stop_bits: 1
   data_bits: 8
   parity: NONE
+
+# ---------------------------------------------------------------------
+# RS485: HUIDIGE RPM LEZEN (func 0xC3, reg 2001) + status publiceren.
+# Blokkeert de ESP ~150 ms per poll (1200 baud). Interval 30 s.
+# ---------------------------------------------------------------------
+interval:
+  - interval: 30s
+    then:
+      - lambda: |-
+          auto uart = id(rs485_uart);
+          while (uart->available() > 0) { uint8_t t; uart->read_array(&t, 1); }
+          uint8_t data[6] = {0xAA, 0xC3, 0x07, 0xD1, 0x00, 0x00};
+          uint16_t crc = 0xFFFF;
+          for (int i = 0; i < 6; i++) {
+            crc ^= data[i];
+            for (int j = 0; j < 8; j++) {
+              if (crc & 0x0001) { crc >>= 1; crc ^= 0xA001; } else { crc >>= 1; }
+            }
+          }
+          uint8_t packet[8] = {0xAA, 0xC3, 0x07, 0xD1, 0x00, 0x00,
+                               (uint8_t)(crc & 0xFF), (uint8_t)((crc >> 8) & 0xFF)};
+          uart->write_array(packet, 8);
+          uart->flush();
+          uint32_t start = millis();
+          while (uart->available() < 7 && (millis() - start) < 300) { delay(1); }
+          if (uart->available() >= 7) {
+            uint8_t resp[7];
+            uart->read_array(resp, 7);
+            if (resp[0] == 0xAA && resp[1] == 0xC3) {
+              id(modbus_status).publish_state("Online");
+              uint16_t rpm = ((uint16_t)resp[5] << 8 | resp[6]);
+              id(pump_rpm_actual).publish_state((float) rpm);
+            } else {
+              id(modbus_status).publish_state("Onbekend antwoord");
+            }
+          } else {
+            id(modbus_status).publish_state("Geen antwoord");
+          }
 
 # ---------------------------------------------------------------------
 # RS485: DOEL-RPM SCHRIJVEN  (func 0xD0, reg 3001)

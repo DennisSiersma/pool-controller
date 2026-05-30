@@ -1,0 +1,66 @@
+# Home Assistant scripts voor de iSaver pool-pomp (RS485)
+# Plak in scripts.yaml (of via Instellingen > Automatiseringen > Scripts).
+#
+# LET OP: controleer de entity_id van je RS485-rpm-getal na het flashen.
+# Verwacht: number.waveshare_relay_rs485_pomp_rpm_rs485
+#
+# HERINNERING: RS485 werkt alleen als de iSaver via het FRONTPANEEL aan staat.
+
+pool_pump_nacht:
+  alias: 'Pomp - Nacht (1400 rpm)'
+  icon: mdi:weather-night
+  sequence:
+    - action: number.set_value
+      target:
+        entity_id: number.waveshare_relay_rs485_pomp_rpm_rs485
+      data:
+        value: 1400
+
+pool_pump_dag:
+  alias: 'Pomp - Dag (2000 rpm)'
+  icon: mdi:weather-sunny
+  sequence:
+    - action: number.set_value
+      target:
+        entity_id: number.waveshare_relay_rs485_pomp_rpm_rs485
+      data:
+        value: 2000
+
+pool_pump_backwash:
+  alias: 'Pomp - Backwash (2900 rpm)'
+  icon: mdi:water-sync
+  sequence:
+    - action: number.set_value
+      target:
+        entity_id: number.waveshare_relay_rs485_pomp_rpm_rs485
+      data:
+        value: 2900
+
+pool_pump_uit:
+  alias: 'Pomp - Uit'
+  icon: mdi:power
+  sequence:
+    - action: number.set_value
+      target:
+        entity_id: number.waveshare_relay_rs485_pomp_rpm_rs485
+      data:
+        value: 0
+
+pool_pump_max_2h:
+  alias: 'Pomp - Max 2 uur, daarna terug'
+  icon: mdi:timer-play
+  mode: single
+  sequence:
+    - variables:
+        previous: "{{ states('number.waveshare_relay_rs485_pomp_rpm_rs485') | int(0) }}"
+    - action: number.set_value
+      target:
+        entity_id: number.waveshare_relay_rs485_pomp_rpm_rs485
+      data:
+        value: 2900
+    - delay: '02:00:00'
+    - action: number.set_value
+      target:
+        entity_id: number.waveshare_relay_rs485_pomp_rpm_rs485
+      data:
+        value: "{{ previous }}"
