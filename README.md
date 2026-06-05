@@ -21,31 +21,36 @@ ESPHome-config voor een zwembadpomp-controller op een **Waveshare ESP32-S3-Relay
 | Flow-sensor | GP12 |
 | I2C SDA / SCL | GP8 / GP10 |
 
-## Crash-onderzoek
+## Crash-onderzoek (historie)
 
-**Symptoom:** device draait een tijd stabiel (uren tot ~een dag) en gaat daarna in een reboot-loop (verbinding valt elke ~15 s weg en terug).
+**Symptoom (2025):** device draaide een tijd stabiel (uren tot ~een dag) en ging daarna in een reboot-loop (verbinding viel elke ~15 s weg en terug).
 
 **Bevindingen:**
 
 - Geen logische fout in de YAML: pinindeling klopt, relais/knop-interlocks zijn correct, geen blocking lambda's of hoogfrequente intervals.
 - Verdachte resource-mix: `arduino`-framework + `web_server` + `esp32_improv` (BLE-stack) + WiFi + API + `neopixelbus` tegelijk. Past bij heap-fragmentatie / out-of-memory na verloop van tijd.
 - Firmware op device was verouderd (2024.8.0) t.o.v. dashboard (2026.5.1).
+- Na het verwijderen van BLE (v2): stabiel. Diagnose-sensoren (juni 2026): heap 259 kB vrij, geen crash-patroon.
 
 ## Versies (zie git-historie)
 
-1. **Commit 1 — originele config.** Werkende basis, maar crasht na enkele uren. BLE (`esp32_improv`) actief voor het uitlezen van zwembadsensoren.
-2. **Commit 2 — diagnoseversie (huidige).** 
+1. **v1 — originele config.** Werkende basis, maar crashte na enkele uren. BLE (`esp32_improv`) actief voor het uitlezen van zwembadsensoren.
+2. **v2 — diagnoseversie (`esphome-web-3e8cfc-rs485.yaml`, nu actief op het device).**
    - `esp32_improv` / BLE verwijderd (grootste onnodige RAM-verbruiker). `improv_serial` behouden (serieel, kost vrijwel niks).
    - Diagnostiek toegevoegd: `Heap Free`, `Heap Max Block`, `Loop Time`, `Uptime`, `WiFi Signal` en `Reset Reason`.
-   - Functioneel verder identiek.
+   - RS485-aansturing van de iSaver+ (traploos rpm), relais als backup.
+3. **v3 — ESP-IDF + Bluetooth proxy (`esphome-web-3e8cfc-rs485-ble.yaml`, NOG NIET GEFLASHT).**
+   - `framework: arduino` → `esp-idf` (sinds ESPHome 2026.1 de standaard; zuiniger met RAM en de aanbevolen basis voor BLE).
+   - `neopixelbus` (Arduino-only) → `esp32_rmt_led_strip`.
+   - `esp32_ble_tracker` + `bluetooth_proxy` (active, 1 connection slot, conservatieve scan-window) om de **Blue Riiot Blue Connect Plus** via BLE in Home Assistant te krijgen.
+   - Bewaking: HA-automation "Poolcontroller: stabiliteitsbewaking" pusht bij elke herstart (Reset Reason) en bij heap < 100 kB. Onstabiel? → v2 terugflashen.
 
-## Zo sluit je de oorzaak uit
+## Flashplan v3
 
-1. Flash de diagnoseversie en werk meteen de firmware bij naar de actuele ESPHome-versie.
-2. Volg over de uren `Heap Free` en `Heap Max Block` in Home Assistant.
-   - Dalen die gestaag tot vlak voor een crash → bevestigd geheugenprobleem (geen logica-bug).
-3. Kijk na een crash naar `Reset Reason` — die toont waarom de ESP herstartte (panic, watchdog, brownout, ...).
-4. Blijft het crashen, dan is `web_server` de volgende kandidaat om uit te zetten. Overweeg ook `framework: esp-idf` voor lager RAM-gebruik.
+1. OTA via ESPHome add-on naar 192.168.1.238 (eerste IDF-build compileert 10-15 min).
+2. Pomp blijft fysiek draaien tijdens flash; alleen besturing is even weg. Worst case bij mislukte OTA over de framework-wissel: USB-herflash.
+3. Na flash checken: `Modbus status` = Online, RPM klopt, RGB-led-kleuren goed (anders `rgb_order: RGB`).
+4. Blue Connect verschijnt daarna als ontdekt BLE-apparaat in HA; uitlezen via de BlueConnect HACS-component.
 
 ## Secrets
 
