@@ -1,0 +1,379 @@
+# Pool Controller DJS - Waveshare ESP32-S3-Relay-6CH
+# =====================================================================
+# v3 (juni 2026): MIGRATIE ARDUINO -> ESP-IDF + BLUETOOTH PROXY
+#
+# Wijzigingen t.o.v. v2 (RS485-versie):
+#   1. framework: arduino -> esp-idf (nodig voor stabiele BLE-stack;
+#      sinds ESPHome 2026.1 sowieso de standaard).
+#   2. RGB-led: neopixelbus (Arduino-only!) -> esp32_rmt_led_strip.
+#   3. NIEUW: esp32_ble_tracker + bluetooth_proxy (actief) zodat HA de
+#      Blue Connect Plus (zwembad-watermeter) via BLE kan uitlezen.
+#      Conservatieve scan-instellingen i.v.m. gedeelde wifi/BLE-radio.
+#   4. Al het overige (RS485, relais, knoppen, LEDs, buzzer) ongewijzigd.
+#
+# FLASHEN: via ESPHome add-on, OTA naar 192.168.1.238 (use_address).
+#   Eerste IDF-build duurt lang (~10-15 min compileren). Pomp blijft
+#   draaien in laatste stand tijdens de flash; alleen besturing is even weg.
+#   Worst case (OTA faalt halverwege framework-wissel): USB-kabel nodig.
+#
+# BEWAKING NA FLASH: HA-automation "Poolcontroller: stabiliteitsbewaking"
+#   pusht bij verandering van Reset Reason of heap < 100 kB (5 min).
+#   Blijft de boel onstabiel -> v2 (esphome-web-3e8cfc-rs485.yaml) terugflashen.
+#
+# RS485-PROTOCOL (gereverse-engineerd, GEEN standaard Modbus):
+#   - 1200 baud, 8N1.  Slave/sync byte = 0xAA (170).
+#   - Frame: AA <func> <reg-hi> <reg-lo> <data-hi> <data-lo> <CRC-lo> <CRC-hi>
+#   - CRC = Modbus-CRC16 (init 0xFFFF, poly 0xA001), laagste byte eerst.
+#   - Lees huidige rpm : func 0xC3, reg 2001 (0x07D1)
+#   - Schrijf doel-rpm : func 0xD0, reg 3001 (0x0BB9); rpm < 1200 => uit
+#   - Alleen rpm lezen/schrijven werkt betrouwbaar (community-bevinding).
+#
+# BEDIENINGSVOLGORDE: RS485 werkt ALLEEN als de iSaver eerst via het
+#   FRONTPANEEL is aangezet. Gebruik RS485 EN de relais niet door elkaar.
+# =====================================================================
+
+substitutions:
+  name: esphome-web-3e8cfc
+  friendly_name: Waveshare Relay RS485
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  name_add_mac_suffix: false
+  platformio_options:
+    board_build.flash_mode: dio
+  project:
+    name: esphome.web
+    version: '1.0'
+
+esp32:
+  board: esp32-s3-devkitc-1
+  framework:
+    type: esp-idf          # <-- was: arduino
+
+logger:
+  # Zet op DEBUG als je de RS485-frames live wilt zien:
+  # level: DEBUG
+
+api:
+  reboot_timeout: 0s
+
+ota:
+  platform: esphome
+
+improv_serial:
+
+wifi:
+  ap: {}
+  # Device draait nu op .238 (DHCP); static_ip is .47. Tot dat is opgelost
+  # richten we OTA op het huidige adres. Daarna .47 of esphome-web-3e8cfc.local.
+  use_address: 192.168.1.238
+  #manual_ip:
+  #  static_ip: 192.168.1.47
+  #  gateway: 192.168.1.1
+  #  subnet: 255.255.255.0
+
+captive_portal:
+
+dashboard_import:
+  package_import_url: github://esphome/firmware/esphome-web/esp32s3.yaml@v2
+  import_full_config: true
+
+web_server:
+
+# ---------------------------------------------------------------------
+# NIEUW: BLE-tracker + Bluetooth-proxy voor de Blue Connect Plus.
+# Conservatief: korte scan-window (radio gedeeld met wifi), 1 connectie.
+# Wordt het tóch onstabiel: eerst window verlagen naar 20ms, daarna pas
+# hele blok uitcommentariëren (= terug naar situatie zonder BLE).
+# ---------------------------------------------------------------------
+esp32_ble_tracker:
+  scan_parameters:
+    interval: 320ms
+    window: 30ms
+    active: true
+
+bluetooth_proxy:
+  active: true          # nodig: Blue Connect vereist een actieve verbinding
+  connection_slots: 1   # we hoeven maar 1 apparaat te bedienen
+
+# ---------------------------------------------------------------------
+# DIAGNOSTIEK (geheugen / uptime / WiFi / reset-reden)
+# ---------------------------------------------------------------------
+debug:
+  update_interval: 30s
+
+sensor:
+  - platform: debug
+    free:
+      name: 'Heap Free'
+    block:
+      name: 'Heap Max Block'
+    loop_time:
+      name: 'Loop Time'
+  - platform: uptime
+    name: 'Uptime'
+  - platform: wifi_signal
+    name: 'WiFi Signal'
+    update_interval: 60s
+
+  # Huidige rpm (gevuld door het interval hieronder)
+  - platform: template
+    name: 'Huidige RPM (RS485)'
+    id: pump_rpm_actual
+    unit_of_measurement: 'rpm'
+    accuracy_decimals: 0
+    update_interval: never
+
+text_sensor:
+  - platform: debug
+    reset_reason:
+      name: 'Reset Reason'
+  - platform: template
+    name: 'Modbus status'
+    id: modbus_status
+
+# ---------------------------------------------------------------------
+# RS485 UART (onboard transceiver, auto-direction -> geen DE-pin)
+# ---------------------------------------------------------------------
+uart:
+  id: rs485_uart
+  tx_pin: GPIO17
+  rx_pin: GPIO18
+  baud_rate: 1200
+  stop_bits: 1
+  data_bits: 8
+  parity: NONE
+
+# ---------------------------------------------------------------------
+# RS485: HUIDIGE RPM LEZEN (func 0xC3, reg 2001) + status publiceren.
+# Blokkeert de ESP ~150 ms per poll (1200 baud). Interval 30 s.
+# ---------------------------------------------------------------------
+interval:
+  - interval: 30s
+    then:
+      - lambda: |-
+          auto uart = id(rs485_uart);
+          while (uart->available() > 0) { uint8_t t; uart->read_array(&t, 1); }
+          uint8_t data[6] = {0xAA, 0xC3, 0x07, 0xD1, 0x00, 0x00};
+          uint16_t crc = 0xFFFF;
+          for (int i = 0; i < 6; i++) {
+            crc ^= data[i];
+            for (int j = 0; j < 8; j++) {
+              if (crc & 0x0001) { crc >>= 1; crc ^= 0xA001; } else { crc >>= 1; }
+            }
+          }
+          uint8_t packet[8] = {0xAA, 0xC3, 0x07, 0xD1, 0x00, 0x00,
+                               (uint8_t)(crc & 0xFF), (uint8_t)((crc >> 8) & 0xFF)};
+          uart->write_array(packet, 8);
+          uart->flush();
+          uint32_t start = millis();
+          while (uart->available() < 7 && (millis() - start) < 300) { delay(1); }
+          if (uart->available() >= 7) {
+            uint8_t resp[7];
+            uart->read_array(resp, 7);
+            if (resp[0] == 0xAA && resp[1] == 0xC3) {
+              id(modbus_status).publish_state("Online");
+              uint16_t rpm = ((uint16_t)resp[5] << 8 | resp[6]);
+              id(pump_rpm_actual).publish_state((float) rpm);
+            } else {
+              id(modbus_status).publish_state("Onbekend antwoord");
+            }
+          } else {
+            id(modbus_status).publish_state("Geen antwoord");
+          }
+
+# ---------------------------------------------------------------------
+# RS485: DOEL-RPM SCHRIJVEN  (func 0xD0, reg 3001)
+# 0 of < 1200 rpm => pomp uit.  Stap 50 rpm (zoals de iSaver zelf).
+# ---------------------------------------------------------------------
+number:
+  - platform: template
+    name: 'Pomp RPM (RS485)'
+    id: pump_rpm_set
+    min_value: 0
+    max_value: 2900
+    step: 50
+    optimistic: true
+    restore_value: true
+    set_action:
+      then:
+        - lambda: |-
+            uint16_t rpm = (uint16_t) x;
+            if (rpm < 1200) { rpm = 1; }  // < 1200 = uit
+            uint8_t rpm_hi = (rpm >> 8) & 0xFF;
+            uint8_t rpm_lo = rpm & 0xFF;
+            uint8_t data[6] = {0xAA, 0xD0, 0x0B, 0xB9, rpm_hi, rpm_lo};
+            uint16_t crc = 0xFFFF;
+            for (int i = 0; i < 6; i++) {
+              crc ^= data[i];
+              for (int j = 0; j < 8; j++) {
+                if (crc & 0x0001) { crc >>= 1; crc ^= 0xA001; } else { crc >>= 1; }
+              }
+            }
+            uint8_t packet[8] = {0xAA, 0xD0, 0x0B, 0xB9, rpm_hi, rpm_lo,
+                                 (uint8_t)(crc & 0xFF), (uint8_t)((crc >> 8) & 0xFF)};
+            id(rs485_uart).write_array(packet, 8);
+            id(rs485_uart).flush();
+
+# ---------------------------------------------------------------------
+# BACKUP: relais -> iSaver digitale ingangen
+#   RL1 -> Di1 (on/off) | RL2 -> Di2 (2900 High)
+#   RL3 -> Di3 (2400 Mid) | RL4 -> Di4 (1200 Low)
+# interlock: zorgt dat maar EEN snelheidsrelais tegelijk aan staat.
+# ---------------------------------------------------------------------
+switch:
+  - platform: gpio
+    pin: GPIO1
+    name: 'Pump Toggle'
+    id: RL1
+    on_turn_on:
+      - output.turn_on: led_power
+    on_turn_off:
+      - switch.turn_off: RL2
+      - switch.turn_off: RL3
+      - switch.turn_off: RL4
+      - output.turn_off: led_power
+  - platform: gpio
+    pin: GPIO2
+    name: 'Pump High'
+    id: RL2
+    interlock: [RL3, RL4]
+    on_turn_on:
+      - output.turn_on: led_high
+    on_turn_off:
+      - output.turn_off: led_high
+  - platform: gpio
+    pin: GPIO41
+    name: 'Pump Mid'
+    id: RL3
+    interlock: [RL2, RL4]
+    on_turn_on:
+      - output.turn_on: led_med
+    on_turn_off:
+      - output.turn_off: led_med
+  - platform: gpio
+    pin: GPIO42
+    name: 'Pump Low'
+    id: RL4
+    interlock: [RL2, RL3]
+    on_turn_on:
+      - output.turn_on: led_low
+    on_turn_off:
+      - output.turn_off: led_low
+  - platform: template
+    name: 'switch_buzzer'
+    optimistic: true
+    turn_on_action:
+      - output.turn_on: buzzer
+      - output.ledc.set_frequency:
+          id: buzzer
+          frequency: '2441Hz'
+      - output.set_level:
+          id: buzzer
+          level: '75%'
+    turn_off_action:
+      - output.turn_off: buzzer
+
+# ---------------------------------------------------------------------
+# Outputs - LED-pinnen per pinout-comment:
+#   knop1 (on/off)=GP13 | knop2 (low)=GP14 | knop3 (med)=GP15 | knop4 (high)=GP16
+# ---------------------------------------------------------------------
+output:
+  - platform: ledc
+    pin: GPIO21
+    id: buzzer
+  - platform: gpio
+    pin: GPIO13
+    id: led_power   # naast knop 1 (on/off)
+  - platform: gpio
+    pin: GPIO14
+    id: led_low     # naast knop 2 (low)
+  - platform: gpio
+    pin: GPIO15
+    id: led_med     # naast knop 3 (med)
+  - platform: gpio
+    pin: GPIO16
+    id: led_high    # naast knop 4 (high)
+
+# ---------------------------------------------------------------------
+# Fysieke knoppen.  Snelheidsknoppen sturen het JUISTE relais aan.
+# ---------------------------------------------------------------------
+binary_sensor:
+  - platform: gpio
+    pin:
+      number: GPIO5
+      mode: { input: true, pulldown: true }
+    filters:
+      - delayed_on: 100ms
+      - delayed_off: 100ms
+    name: 'Zwembadpomp on-off'
+    on_press:
+      then:
+        - switch.toggle: RL1
+  - platform: gpio
+    pin:
+      number: GPIO4
+      mode: { input: true, pulldown: true }
+    filters:
+      - delayed_on: 100ms
+      - delayed_off: 100ms
+    name: 'Zwembadpomp low speed'
+    on_press:
+      then:
+        - switch.turn_on: RL4   # Low = Di4 (1200 rpm)
+  - platform: gpio
+    pin:
+      number: GPIO40
+      mode: { input: true, pulldown: true }
+    filters:
+      - delayed_on: 100ms
+      - delayed_off: 100ms
+    name: 'Zwembadpomp med speed'
+    on_press:
+      then:
+        - switch.turn_on: RL3   # Mid = Di3 (2400 rpm)
+  - platform: gpio
+    pin:
+      number: GPIO39
+      mode: { input: true, pulldown: true }
+    filters:
+      - delayed_on: 100ms
+      - delayed_off: 100ms
+    name: 'Zwembadpomp high speed'
+    on_press:
+      then:
+        - switch.turn_on: RL2   # High = Di2 (2900 rpm)
+  - platform: gpio
+    pin:
+      number: GPIO12
+      inverted: True
+      mode: { input: true, pulldown: True }
+    name: 'zwembad flow sensor'
+
+# ---------------------------------------------------------------------
+# Status-LEDs.  LET OP: neopixelbus is Arduino-only; onder ESP-IDF
+# vervangen door esp32_rmt_led_strip (zelfde pin, zelfde gedrag).
+# Klopt de kleurvolgorde niet (rood/groen verwisseld)? Zet rgb_order
+# op RGB i.p.v. GRB.
+# ---------------------------------------------------------------------
+light:
+  - platform: esp32_rmt_led_strip
+    name: 'RGB Light'
+    pin: GPIO38
+    chipset: ws2812
+    rgb_order: GRB
+    num_leds: 1
+    id: rgb1
+  - platform: binary
+    name: 'LED aan/uit'
+    output: led_power
+  - platform: binary
+    name: 'LED laag'
+    output: led_low
+  - platform: binary
+    name: 'LED midden'
+    output: led_med
+  - platform: binary
+    name: 'LED hoog'
+    output: led_high
