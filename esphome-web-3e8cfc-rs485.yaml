@@ -345,11 +345,10 @@ light:
     output: led_power
   - platform: binary
     name: 'LED laag'
-    output: led_med
+    output: led_low
   - platform: binary
     name: 'LED midden'
     output: led_med
   - platform: binary
     name: 'LED hoog'
     output: led_high
-```
