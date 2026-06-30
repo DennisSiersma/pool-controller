@@ -1,7 +1,15 @@
 # Pool Controller DJS - Waveshare ESP32-S3-Relay-6CH
 # =====================================================================
-# RS485-VERSIE (v2): stuurt de iSaver+ (Aquagem) traploos aan via RS485,
-# met de relais behouden als BACKUP (gecorrigeerde logica + LEDs).
+# RS485-VERSIE (v3): stuurt de iSaver+ (Aquagem) traploos aan via RS485,
+# met de relais behouden als BACKUP. NU OOK BLE als bluetooth_proxy zodat
+# Home Assistant via dit bord de Blue Riiot (Blue Connect Go) kan uitlezen.
+#
+# WIJZIGINGEN t.o.v. v2 (na weken stabiel draaien):
+#   - framework arduino -> esp-idf (veel betere BLE+WiFi-coexistentie, minder RAM)
+#   - web_server VERWIJDERD (vrat RAM; niet nodig, HA doet de UI)
+#   - esp32_ble_tracker + bluetooth_proxy (active) toegevoegd
+#   - RGB-status-LED: neopixelbus -> esp32_rmt_led_strip (neopixelbus is
+#     arduino-only en compileert niet op esp-idf)
 #
 # RS485-PROTOCOL (gereverse-engineerd, GEEN standaard Modbus):
 #   - 1200 baud, 8N1.  Slave/sync byte = 0xAA (170).
@@ -38,7 +46,7 @@ esphome:
 esp32:
   board: esp32-s3-devkitc-1
   framework:
-    type: arduino
+    type: esp-idf
 
 logger:
   # Zet op DEBUG als je de RS485-frames live wilt zien:
@@ -64,7 +72,22 @@ dashboard_import:
   package_import_url: github://esphome/firmware/esphome-web/esp32s3.yaml@v2
   import_full_config: true
 
-web_server:
+# ---------------------------------------------------------------------
+# BLE: dit bord als Bluetooth-proxy voor HA.
+#   - esp32_ble_tracker met actief scannen (nodig om de Blue Plus te vinden)
+#   - bluetooth_proxy active: true -> HA mag ACTIEVE GATT-verbindingen maken
+#     via dit bord. Dat is wat de 'Blue Connect Go'-integratie nodig heeft
+#     om de sensor te wekken en een verse meting op te halen.
+# LET OP: de Blue Plus moet binnen BLE-bereik van dit bord liggen.
+# ---------------------------------------------------------------------
+esp32_ble_tracker:
+  scan_parameters:
+    interval: 1100ms
+    window: 1100ms
+    active: true
+
+bluetooth_proxy:
+  active: true
 
 # ---------------------------------------------------------------------
 # DIAGNOSTIEK (geheugen / uptime / WiFi / reset-reden)
@@ -247,7 +270,6 @@ switch:
 # ---------------------------------------------------------------------
 # Outputs - LED-pinnen per jouw pinout-comment:
 #   knop1 (on/off)=GP13 | knop2 (low)=GP14 | knop3 (med)=GP15 | knop4 (high)=GP16
-# (In de oude config waren deze paarsgewijs verwisseld - hier gecorrigeerd.)
 # ---------------------------------------------------------------------
 output:
   - platform: ledc
@@ -267,8 +289,7 @@ output:
     id: led_high    # naast knop 4 (high)
 
 # ---------------------------------------------------------------------
-# Fysieke knoppen.  Snelheidsknoppen sturen het JUISTE relais aan
-# (in de oude config waren low <-> high omgewisseld).
+# Fysieke knoppen.  Snelheidsknoppen sturen het JUISTE relais aan.
 # ---------------------------------------------------------------------
 binary_sensor:
   - platform: gpio
@@ -323,19 +344,16 @@ binary_sensor:
     name: 'zwembad flow sensor'
 
 # ---------------------------------------------------------------------
-# Status-LEDs (RGB) en de knop-LEDs als losse lichtjes (monitor/override)
+# Status-LEDs (RGB, nu via esp32_rmt_led_strip) en knop-LEDs.
 # ---------------------------------------------------------------------
 light:
-  - platform: neopixelbus
+  - platform: esp32_rmt_led_strip
     name: 'RGB Light'
     pin: GPIO38
-    type: RGB
-    variant: WS2812x
     num_leds: 1
+    chipset: WS2812
+    rgb_order: GRB
     id: rgb1
-    method:
-      type: esp32_rmt
-      channel: 0
   - platform: binary
     name: 'LED aan/uit'
     output: led_power
