@@ -1,24 +1,26 @@
 # Pool Controller DJS - Waveshare ESP32-S3-Relay-6CH
 # =====================================================================
-# v3 (juni 2026): MIGRATIE ARDUINO -> ESP-IDF + BLUETOOTH PROXY
+# v3 (DEZE versie flashen): MIGRATIE ARDUINO -> ESP-IDF + BLUETOOTH PROXY
 #
-# Wijzigingen t.o.v. v2 (RS485-versie):
-#   1. framework: arduino -> esp-idf (nodig voor stabiele BLE-stack;
-#      sinds ESPHome 2026.1 sowieso de standaard).
+# Wijzigingen t.o.v. v2 (esphome-web-3e8cfc-rs485.yaml = arduino-rollback):
+#   1. framework: arduino -> esp-idf (stabiele BLE-stack; sinds ESPHome
+#      2026.1 sowieso de standaard).
 #   2. RGB-led: neopixelbus (Arduino-only!) -> esp32_rmt_led_strip.
 #   3. NIEUW: esp32_ble_tracker + bluetooth_proxy (actief) zodat HA de
-#      Blue Connect Plus (zwembad-watermeter) via BLE kan uitlezen.
-#      Conservatieve scan-instellingen i.v.m. gedeelde wifi/BLE-radio.
-#   4. Al het overige (RS485, relais, knoppen, LEDs, buzzer) ongewijzigd.
+#      Blue Plus (zwembad-watermeter) via BLE kan uitlezen.
+#      Zuinige scan-instellingen i.v.m. gedeelde wifi/BLE-radio.
+#   4. web_server VERWIJDERD (vrat RAM; HA doet de UI).
+#   5. Vast IP eruit -> DHCP + mDNS (esphome-web-3e8cfc.local).
+#   6. Al het overige (RS485, relais, knoppen, LEDs, buzzer) ongewijzigd.
 #
-# FLASHEN: via ESPHome add-on, OTA naar 192.168.1.238 (use_address).
-#   Eerste IDF-build duurt lang (~10-15 min compileren). Pomp blijft
-#   draaien in laatste stand tijdens de flash; alleen besturing is even weg.
-#   Worst case (OTA faalt halverwege framework-wissel): USB-kabel nodig.
+# FLASHEN: via ESPHome add-on. Eerste IDF-build duurt lang (~10-15 min).
+#   Compileer eerst; daarna OTA. Pomp blijft draaien in laatste stand
+#   tijdens de flash; alleen besturing is even weg. Worst case (OTA faalt
+#   halverwege de framework-wissel): USB-kabel nodig.
 #
-# BEWAKING NA FLASH: HA-automation "Poolcontroller: stabiliteitsbewaking"
-#   pusht bij verandering van Reset Reason of heap < 100 kB (5 min).
-#   Blijft de boel onstabiel -> v2 (esphome-web-3e8cfc-rs485.yaml) terugflashen.
+# BEWAKING NA FLASH: hou heap/uptime/Reset Reason in de gaten. Blijft het
+#   onstabiel -> v2 (esphome-web-3e8cfc-rs485.yaml) terugflashen, of eerst
+#   het BLE-blok hieronder uitcommentariEren.
 #
 # RS485-PROTOCOL (gereverse-engineerd, GEEN standaard Modbus):
 #   - 1200 baud, 8N1.  Slave/sync byte = 0xAA (170).
@@ -64,14 +66,9 @@ ota:
 improv_serial:
 
 wifi:
+  # DHCP + mDNS: HA vindt het device via esphome-web-3e8cfc.local, ongeacht
+  # welk IP de router uitdeelt. Geen vast IP (voorkomt IP-mismatch).
   ap: {}
-  # Device draait nu op .238 (DHCP); static_ip is .47. Tot dat is opgelost
-  # richten we OTA op het huidige adres. Daarna .47 of esphome-web-3e8cfc.local.
-  use_address: 192.168.1.238
-  #manual_ip:
-  #  static_ip: 192.168.1.47
-  #  gateway: 192.168.1.1
-  #  subnet: 255.255.255.0
 
 captive_portal:
 
@@ -79,13 +76,11 @@ dashboard_import:
   package_import_url: github://esphome/firmware/esphome-web/esp32s3.yaml@v2
   import_full_config: true
 
-web_server:
-
 # ---------------------------------------------------------------------
-# NIEUW: BLE-tracker + Bluetooth-proxy voor de Blue Connect Plus.
-# Conservatief: korte scan-window (radio gedeeld met wifi), 1 connectie.
-# Wordt het tóch onstabiel: eerst window verlagen naar 20ms, daarna pas
-# hele blok uitcommentariëren (= terug naar situatie zonder BLE).
+# BLE-tracker + Bluetooth-proxy voor de Blue Plus.
+# Zuinig: kort scan-window (radio gedeeld met wifi), 1 connectie.
+# Wordt het tOch onstabiel: eerst window verlagen naar 20ms, daarna pas
+# het hele blok uitcommentariEren (= terug naar situatie zonder BLE).
 # ---------------------------------------------------------------------
 esp32_ble_tracker:
   scan_parameters:
@@ -94,7 +89,7 @@ esp32_ble_tracker:
     active: true
 
 bluetooth_proxy:
-  active: true          # nodig: Blue Connect vereist een actieve verbinding
+  active: true          # nodig: Blue Connect/Blue Plus vereist actieve verbinding
   connection_slots: 1   # we hoeven maar 1 apparaat te bedienen
 
 # ---------------------------------------------------------------------
@@ -352,10 +347,9 @@ binary_sensor:
     name: 'zwembad flow sensor'
 
 # ---------------------------------------------------------------------
-# Status-LEDs.  LET OP: neopixelbus is Arduino-only; onder ESP-IDF
-# vervangen door esp32_rmt_led_strip (zelfde pin, zelfde gedrag).
-# Klopt de kleurvolgorde niet (rood/groen verwisseld)? Zet rgb_order
-# op RGB i.p.v. GRB.
+# Status-LEDs.  neopixelbus is Arduino-only; onder ESP-IDF vervangen door
+# esp32_rmt_led_strip (zelfde pin, zelfde gedrag).
+# Klopt de kleurvolgorde niet? Zet rgb_order op RGB i.p.v. GRB.
 # ---------------------------------------------------------------------
 light:
   - platform: esp32_rmt_led_strip
